@@ -100,10 +100,7 @@ library(MASS)
 
 ```{r, echo=FALSE, fig.width=8, fig.height=6}
 # loading data into R
-gdp_data <- read.csv(
-  "~/Documents/UCLA/YEAR 3/winter 2025/econ 103:L/FINAL PROJECT/GDP - DATA.csv",
-  header = TRUE
-)
+gdp_data <- read.csv("GDP - DATA.csv", header = TRUE)
 
 # View structure of dataset
 str(gdp_data)
