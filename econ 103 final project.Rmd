@@ -1,0 +1,420 @@
+---
+title: "To what extent do key macroeconomic indicators influence the nominal GDP of the United States?"
+subtitle: "ECON 103L FINAL PROJECT"
+author: "Manuela Lozano, Sebastian Farah, Miguel Quiñones"
+date: "2025-03-13"
+output: 
+  pdf_document:
+    toc: true
+    number_sections: true
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE, message=FALSE}
+library(ggplot2)
+library(broom)      # for augment()
+library(patchwork)  # for combining plots
+
+theme_set(theme_minimal())
+
+diag_plots <- function(fit, title_prefix = "") {
+  aug <- augment(fit)
+
+  # 1) Residuals vs Fitted
+  p1 <- ggplot(aug, aes(.fitted, .resid)) +
+    geom_point(alpha = 0.6) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    labs(
+      x = "Fitted values",
+      y = "Residuals",
+      title = paste(title_prefix, "Residuals vs Fitted")
+    )
+
+  # 2) Normal Q–Q
+  p2 <- ggplot(aug, aes(sample = .std.resid)) +
+    stat_qq(alpha = 0.6) +
+    stat_qq_line() +
+    labs(
+      x = "Theoretical quantiles",
+      y = "Standardized residuals",
+      title = paste(title_prefix, "Q–Q Residuals")
+    )
+
+  # 3) Scale–Location
+  p3 <- ggplot(aug, aes(.fitted, sqrt(abs(.std.resid)))) +
+    geom_point(alpha = 0.6) +
+    geom_smooth(se = FALSE, method = "loess") +
+    labs(
+      x = "Fitted values",
+      y = "√|Standardized residuals|",
+      title = paste(title_prefix, "Scale–Location")
+    )
+
+  # 4) Residuals vs Leverage (Cook’s distance)
+  p4 <- ggplot(aug, aes(.hat, .std.resid)) +
+    geom_point(aes(size = .cooksd), alpha = 0.6) +
+    geom_smooth(se = FALSE, method = "loess") +
+    labs(
+      x = "Leverage",
+      y = "Standardized residuals",
+      title = paste(title_prefix, "Residuals vs Leverage")
+    ) +
+    guides(size = "none")
+
+  # Return a 2×2 grid as ONE figure (one page)
+  (p1 | p2) / (p3 | p4)
+}
+```
+
+\newpage
+
+# Introduction 
+
+Economic growth is a key indicator of a nation’s well-being, influencing policy decisions, investment strategies, and social welfare programs. One of the primary measures of economic performance is **nominal Gross Domestic Product (GDP)**, which captures the total value of goods and services produced within a country. Understanding the factors that drive GDP is critical for policymakers, economists, and financial analysts.
+
+This study investigates the impact of key **macroeconomic indicators**—unemployment rate, inflation, the federal funds rate, money supply, and consumer confidence—on the **nominal GDP of the United States**. These variables are widely recognized as fundamental drivers of economic activity. By analyzing **241 monthly observations from 2004 to 2024**, this study aims to determine the extent to which changes in these factors influence GDP. 
+
+The **hypothesis** guiding this study is as follows:  
+*"Changes in macroeconomic variables, specifically the unemployment rate, inflation, the federal funds rate, money supply, and consumer confidence, have a significant impact on the nominal Gross Domestic Product (GDP) of the United States."*  
+
+To test this hypothesis, we employ **multiple linear regression models** to quantify these relationships. Diagnostic tests such as **Variance Inflation Factor (VIF) analysis, Akaike Information Criterion (AIC) selection, and the RESET test** are used to assess model reliability. The results of this study provide insights into the interactions between **monetary policy, consumer sentiment, and economic performance**, which have important implications for forecasting economic trends and designing effective policy interventions.
+
+---
+
+# Results and Analysis
+
+```{r, echo=FALSE, message=FALSE}
+# Load necessary libraries
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(corrplot)
+library(car)
+library(lmtest)
+library(MASS)
+```
+
+
+## Understanding the Data 
+
+```{r, echo=FALSE, fig.width=8, fig.height=6}
+# loading data into R
+gdp_data <- read.csv(
+  "~/Documents/UCLA/YEAR 3/winter 2025/econ 103:L/FINAL PROJECT/GDP - DATA.csv",
+  header = TRUE
+)
+
+# View structure of dataset
+str(gdp_data)
+
+# Summary statistics
+summary(gdp_data)
+
+# Prepare data for visualization (drop DATE if present)
+analysis_data <- gdp_data[, !names(gdp_data) %in% "DATE"]
+
+# Make a long version for ggplot faceting
+analysis_long <- analysis_data |>
+  tidyr::pivot_longer(
+    cols      = everything(),
+    names_to  = "variable",
+    values_to = "value"
+  )
+
+# 1) Histograms with overlaid density, all in one faceted figure
+ggplot(analysis_long, aes(x = value)) +
+  geom_histogram(aes(y = after_stat(..density..)),
+                 bins = 30, alpha = 0.7) +
+  geom_density(linewidth = 0.8) +
+  facet_wrap(~ variable, scales = "free", ncol = 3) +
+  labs(
+    title = "Histograms of Macroeconomic Variables",
+    x = NULL,
+    y = "Density"
+  )
+
+# 2) Correlation matrix and heatmap
+cor_matrix <- cor(analysis_data, use = "complete.obs")
+corrplot(
+  cor_matrix,
+  method = "circle",
+  type   = "upper",
+  title  = "Correlation Matrix of Variables",
+  tl.col = "black",
+  tl.srt = 45
+)
+
+# 3) Scatterplot matrix for visualizing relationships
+pairs(
+  analysis_data,
+  main = "Scatterplot Matrix of Variables",
+  pch  = 19,
+  col  = rgb(0, 0, 1, 0.5)
+)
+
+# 4) Boxplots in one ggplot figure
+ggplot(analysis_long, aes(x = variable, y = value)) +
+  geom_boxplot() +
+  coord_flip() +
+  labs(
+    title = "Boxplots of Macroeconomic Variables",
+    x     = NULL,
+    y     = "Value"
+  )
+```
+
+1. **Description of Data:**
+
+Seven variables—nominal GDP, unemployment rate (UNRATE), inflation (GDP deflator), federal funds rate (FEDFUNDS), money supply (M2SL), and consumer confidence index (CCI)—as well as a date variable to monitor changes over time are included in the 241-observation dataset utilized in this study. 
+
+A summary statistics analysis was conducted to better understand the distribution of each variable. The nominal GDP values range from 12,527 to 29,720, with a median of 17,912, suggesting significant growth over time. The unemployment rate fluctuates between 3.4% and 14.8%, with an average of 5.83%, reflecting economic cycles, including recessions and recoveries. Inflation, measured using the GDP deflator, varies from -1.5% (indicating deflation) to 9.4%, highlighting periods of both stable prices and inflationary pressures.  
+
+With a minimum of 0.05% and a maximum of 5.33%, the federal funds rate, which reflects short-term interest rates set by the Federal Reserve, illustrates changes in monetary policy.  With a range of 6,380 to 21,724, the money supply (M2SL) shows significant growth during the investigated period.  Last but not least, the consumer confidence index (CCI), which measures changes in consumer sentiment that may affect purchasing decisions, ranges from 50.00 to 101.40.  
+
+2. **Description of Histograms:**
+
+The histograms illustrate six key macroeconomic variables: GDP, Unemployment Rate (UNRATE), Inflation (DEFLATOR), Federal Funds Rate (FEDFUNDS), Money Supply (M2SL), and Consumer Confidence Index (CCI). These histograms show the distribution of each variable, with a red density curve overlayed to highlight the overall shape and skewness of the data.
+
+The GDP histogram exhibits a right-skewed distribution, meaning that while some higher values provide a long tail, the majority of GDP values are concentrated at lower levels.  With a greater concentration of lower unemployment rates and a few occurrences of high unemployment (such as during recessions), the unemployment rate (UNRATE) histogram likewise seems to be right-skewed.  The somewhat bell-shaped inflation (DEFLATOR) histogram indicates a normal distribution with a small bias toward higher values.
+
+A high left-skew in the federal funds rate (FEDFUNDS) histogram indicates that the majority of values are grouped close to the lower end, most likely representing times when interest rates were low.  A right-skewed distribution characterizes the money supply (M2SL) histogram, which shows growth over time as the money supply increases.  Lastly, there is a peak in the mid-range values of the consumer confidence index (CCI) histogram, which is comparatively symmetrical and resembles a normal distribution.
+
+3. **Description of Heat Map:**
+
+The correlation matrix of Variables heatmap represents the relationships between the six macroeconomic variables: GDP, Unemployment Rate (UNRATE), Inflation (DEFLATOR), Federal Funds Rate (FEDFUNDS), Money Supply (M2SL), and Consumer Confidence Index (CCI). The color and size of the circles indicate the strength and direction of these relationships, with darker blue shades representing strong positive correlations and red shades indicating negative correlations.
+
+According to the heatmap, GDP shows a strong positive correlation with the money supply (M2SL) and the consumer confidence index (CCI), indicating that economic growth is linked to both an increase in the money supply and a rise in consumer confidence.  The projected inverse relationship between economic output and unemployment is further supported by the fact that GDP and the unemployment rate appear to be negatively associated.  Similarly, there is a negative association between the CCI and the unemployment rate, suggesting that more unemployment tends to lower consumer confidence.  Though it exhibits a minor negative association with GDP and M2SL, the Federal Funds Rate (FEDFUNDS) seems to have lesser relationships with most variables, supporting the notion that rising interest rates might stifle economic growth.
+
+4. **Description of Scatterplot:**
+
+The Scatterplot matrix of Variables allows us to assess potential correlations and nonlinear patterns. In this matrix, the relationship between GDP and the variables shows somewhat linear trends, which is expected since GDP is the dependent variable and should respond to changes in the predictors. For example, the relationship between GDP and M2SL exhibits a clear upward trend, indicating a strong positive correlation, which aligns with economic theory as increased money supply is typically associated with a higher nominal GDP. Similarly, GDP’s relation with Unemployment rate shows a downward trend, reflecting the expected inverse relationship between GDP and unemployment, where higher unemployment usually tends to coincide with weaker economic growth. On the other hand, the scatterplots between predictor variables themselves (UNRATE, DEFLATOR, FEDFUNDS, M2SL, CCI), exhibit more scattered and irregular patterns with no clear linear trends, which is a positive outcome. The lack of strong linear relationship between these independent variables reduces the likelihood of multicollinearity, ensuring that each predictor provides distinct and independent information to the regression model. While some variables display mild curvature or clustering, there are no extreme linear patterns that would be indicative of problematic relationships. For example, the scatterplot between UNRATE and FEDFUNDS shows a scattered pattern with no clear linear trend, indicating that changes in the unemployment rate do not move consistently with changes in the federal funds rate, which helps prevent multicollinearity. In a similar way, the relationship between DEFLATOR and CCI appears to be random with no distinct pattern, suggesting that inflation and the consumer confidence index are relatively independent from each other in this dataset. 
+
+5. **Description of Box Plots:**
+
+The boxplots provide a visual representation of the distribution, central tendency, and dispersion of each of the variables in the dataset, highlighting potential outliers and the overall spread of the data. The GDP boxplot highlights a relatively right-skewed distribution with no apparent outliers, suggesting that GDP values fall within a reasonable range throughout the dataset. The median GDP value is near the center of the interquartile range, indicating that GDP growth over the time the observations were collected has followed a relatively consistent trajectory, with no pronounced skewness or extreme deviations within the majority of the observations. 
+The boxplot for the unemployment rate shows a somewhat right-skewed distribution with outliers above the maximum. These outliers are important and represent periods of abnormally high unemployment, likely tied to major economic crises such as the 2019 financial crisis or the COVID pandemic. 
+Furthermore, the boxplot for the inflation deflator displays a right-skewed distribution and appears to be a compacted distribution with various outliers above the maximum. These outliers are reflective of periods of inflation spikes, which may coincide with economic crises or rapid demand fluctuations. The presence of the outliers translate to a skewness to the right, suggesting that inflation may have an unpredictable effect on nominal GDP growth. 
+Moving forward, the boxplot for Federal Funds displays a right-skewed distribution with most data points concentrated near the lower end and gradually extending toward higher values. This pattern is reflective of the FED’s typical monetary policy behavior, where interest rates are kept low for extended periods, with occasional increases in response to rising inflation. The absence of outliers in this boxplot suggests that even the highest interest rates fall within an expected range and are not considered extreme enough to be considered outliers. Given the skewness, the regression model may still be influenced by the concentration of low values and occasional higher rates. 
+The M2SL boxplot shows a right-skewed distribution with no apparent outliers. The right-skewness reflects the natural tendency for the money supply to increase over time as the economy expands, resulting in an upward trend that aligns with economic patterns where the supply of money growth is influenced by factors such as monetary policy adjustments, and economic development. 
+Finally, the boxplot for the Consumer Confidence Index (CCI) shows a slightly left-skewed distribution with most data points concentrated toward the higher end of the range and gradually extending toward lower values. The median is above the center of the box, with approximately 75% of the values falling between 70 and 100, while the lower 25% spans a wider range down to about 50. This pattern suggests a tendency for CCI values to cluster at higher levels, yet, the absence of outliers indicates that even the lowest and highest values of CCI fall within an expected range and are not enough to be considered outliers.  
+
+
+
+## Creating Multi-Linear Regression
+
+```{r, echo=FALSE, fig.width=8, fig.height=6}
+# creating the multillinear regression model
+gdp_model <- lm(GDP ~ UNRATE + DEFLATOR + FEDFUNDS + M2SL + CCI, data = gdp_data)
+
+# summary of model to see if the parameters are significant 
+summary_model <- summary(gdp_model)
+summary_model
+
+# ggplot diagnostics in a single 2×2 grid (one page)
+diag_plots(gdp_model, "Full GDP model")
+```
+
+1. (A) **Analysis of Multilinear Model:**
+
+The initial multiple linear regression model was constructed to analyze the relationship between GDP and five key macroeconomic indicators: unemployment rate (UNRATE), inflation (DEFLATOR), the federal funds rate (FEDFUNDS), money supply (M2SL), and consumer confidence (CCI).
+
+The residuals exhibit a non-random pattern, suggesting potential heteroscedasticity or model misspecification. The presence of clusters and deviations from randomness indicates that the model may not fully capture the underlying relationships between GDP and the predictors. This warrants further investigation through diagnostic tests such as the Breusch-Pagan test for heteroscedasticity and the RESET test for functional form misspecification.
+
+1. (B) **Overall Significance of the Model:**
+
+The overall significance of the regression model was assessed using the F-test, which evaluates whether the predictors collectively explain a significant portion of the variation in GDP. The F-statistic is highly significant (p < 0.001), confirming that the model provides meaningful insights into GDP fluctuations based on macroeconomic indicators. Furthermore, the adjusted R² value of 0.9777 indicates that nearly 98% of the variation in GDP is explained by the predictors, suggesting a strong fit.
+
+However, the exceptionally high R² value raises concerns about potential multicollinearity among predictors, which could inflate the explanatory power of the model artificially. This issue is addressed through Variance Inflation Factor (VIF) analysis in subsequent sections.
+
+2. **Interpretation of Coefficients:**
+
+  - Money Supply (M2SL, β = 0.8915, p < 0.001):
+The positive and highly significant coefficient indicates that an increase in the money supply is strongly associated with higher GDP levels. This aligns with economic theory, as increased money circulation typically stimulates economic growth by boosting investment and consumption.
+
+  - Federal Funds Rate (FEDFUNDS, β = 238.2, p < 0.001):
+Surprisingly, the federal funds rate has a positive relationship with GDP, contrary to conventional economic expectations, which suggest that higher interest rates should slow economic growth. This anomaly may stem from periods where interest rate hikes coincided with strong economic expansion rather than contraction.
+
+  - Unemployment Rate (UNRATE, β = -236.5, p < 0.001):
+The negative coefficient supports economic theory, indicating that higher unemployment rates are associated with lower GDP due to reduced consumer spending and lower overall production levels.
+
+  - Inflation (DEFLATOR, β = -300.3, p < 0.001):
+Inflation negatively affects GDP, likely due to reduced purchasing power and increased costs of production. This result aligns with expectations, where excessive inflation leads to economic instability and slower growth.
+
+  - Consumer Confidence Index (CCI, β = -18.3, p < 0.001):
+The negative coefficient is somewhat counterintuitive, as higher consumer confidence is generally expected to increase GDP through higher consumption. However, this result might suggest that consumer confidence fluctuations do not have a straightforward impact on GDP when accounting for other macroeconomic variables.
+
+Despite the model’s high explanatory power, diagnostic tests suggest several potential issues, which are explored further.
+
+3. **Residual vs. Fitted Values Graph Analysis:**
+
+The Residuals vs. Fitted plot reveals several potential concerns regarding the regression model’s performance and validity. Most notably, the residuals display a curved pattern, indicating that the relationship between the predictors and GDP is not linear. This curvature suggests potential model misspecifications, meaning that the current model is overlooking important non-linear effects. Another concerning feature is the presence of heteroscedasticity, which is evident from the increasing spread of residuals as fitted values increase (the residuals appear tightly clustered at lower fitted values and become more dispersed as fitted values grow). This pattern violates the assumption of constant variance and homoscedasticity, conditions that must hold to ensure reliable standard errors and efficient coefficient estimates in linear regression. In addition, the plot highlights potential outliers (observations 188, 189, and 241), which significantly deviate from the rest of observations.
+
+4. **Q-Q Plot Graph Analysis:**
+
+The Q-Q plot provides further valuable insights into the distribution of the regression model’s residuals and reveals additional potential issues with the model’s assumptions. In this plot, most data points, particularly in the middle range, align well with the regression line, suggesting that the residuals follow a roughly normal distribution for typical GDP values. This alignment indicates that the model performs reasonably well in predicting average observations, which is positive in terms of the overall model fit. However, the plot reveals noticeable deviations at both tails of the distribution, raising concerns about non-normality in the residuals.These deviations are particularly evident in the tails, where points deviate more significantly from the regression line. For instance, on the left tail, observations such as 188 and 189 fall significantly below the regression line, indicating outliers in negative residuals suggesting that the model significantly underestimated GDP for these observations which can be connected to periods of economic decline. On the other hand, the observation of 241 on the right tail deviates significantly from the rest, suggesting that the model overestimated GDP for this observation, indicating that the fitted value was considerably higher than the actual GDP. The presence of these influential points in the residual distribution are key indicators that that model may struggle to accurately predict extreme GDP values, potentially reducing the reliability. 
+
+5. **Scale-Location Graph Analysis:**
+
+The scale-location plot reveals concerning signs of heteroskedasticity, as indicated by the clear upward slope of the red trend line, which suggests that the spread of residuals increases as fitted values grow larger. While the residuals appear tightly clustered at lower fitted values, particularly around the 15,000 to 18,000 range, they become increasingly dispersed as fitted values increase, forming a noticeable pattern that reflects a clear non-constant variance. This pattern indicates that the model’s residuals exhibit greater variability for higher predicted GDP values, meaning that the model may struggle to provide accurate and stable predictions for larger GDP observations. Additionally, the presence of influential points such as 188, 189, and 241 is concerning, as these points deviate significantly from the rest of observations and are clear outliers in the model. Since these observations coincide with areas where the residual variance is highest, their impact on the regression coefficients is substantial, further reducing the reliability of the model. 
+
+6. **Residuals vs. Leverage Graph Analysis:**
+
+We apply the residuals vs leverage plot to identify influential observations that may have an excessive effect on the regression’s model’s coefficients. In this plot, leverage measures how far an observation’s values for the independent variables are from the average, while standardized residuals indicate how far the predicted value is from the actual value. As seen graphically, the majority of points are tightly grouped near the left side, indicating low leverage and relatively small residuals, suggesting that most observations are not exerting an excessive influence on the model. However, there are notable exceptions that have already been discussed previously, particularly observations 187, 188, and 189 which stand out as influential points. These points have higher leverage values and, in some cases, large residuals, positioning them closer to the dashed Cook’s distance curves, which mark the threshold for identifying influential data points.Observation 187 appears to be the most concerning, as it combines both relatively high leverage and a large residual, increasing the likelihood that it is disproportionately affecting the model’s coefficients. The presence of these influential points is significant since such observations can distort the regression results, making the model’s estimates less reliable and potentially skewing the interpretation of the predictor variables’ effects. 
+
+
+
+## Multicollinearity Test (VIF)
+
+```{r, echo=FALSE, fig.width=8, fig.height=6}
+# Multicollinearity check
+vif_values <- vif(gdp_model)
+vif_values
+```
+
+**Analysis Result of VIF Test: Why we should take out UNRATE**
+
+The VIF results indicate that some predictors exhibit moderately high values (3), suggesting multicollinearity may be present. For example:
+
+  - Money Supply (M2SL): High VIF values suggest that this variable may be correlated with other predictors, such as inflation or interest rates.
+  - Federal Funds Rate (FEDFUNDS): Moderate VIF values indicate potential overlap with other monetary policy-related variables.
+
+Multicollinearity can lead to unreliable coefficient estimates and inflated R² values. To address this issue, alternative modeling approaches such as principal component analysis (PCA) or stepwise regression may be considered.
+
+
+
+## Adjusted Model Without UNRATE
+
+```{r, echo=FALSE, fig.width=8, fig.height=6}
+# Remove variables with high VIF and re-estimate the model
+gdp_model2 <- lm(GDP ~  DEFLATOR + FEDFUNDS + CCI, data=gdp_data)
+summary_model2 <- summary(gdp_model2)
+summary_model2
+```
+
+**Analysis of New Model Without UNRATE:**
+
+After removing UNRATE, the revised model included only DEFLATOR, FEDFUNDS, and CCI:
+
+  - Adjusted R² drops from 0.9777 to 0.1551, showing a significant loss of explanatory power.
+  - Inflation (DEFLATOR) reverses its coefficient from negative (-300.3) to strongly positive (795.6), indicating that multicollinearity was influencing the original model.
+  - Consumer confidence (CCI) becomes statistically insignificant (p = 0.05488).
+  - Residual standard error increases dramatically from 685.3 to 4221, indicating a weaker model fit.
+  - This comparison highlights the trade-off between removing multicollinearity and retaining predictive power.
+
+
+## AIC or Shwarts Criteria
+
+```{r, echo=FALSE, fig.width=8, fig.height=6}
+# Compare all possible subsets (could be computationally intensive for many variables)
+all_models <- list()
+
+# Start with single predictor models
+predictors <- c("UNRATE", "DEFLATOR", "FEDFUNDS", "M2SL", "CCI")
+for (i in seq_along(predictors)) {
+  all_models[[i]] <- lm(paste("GDP ~", predictors[i]), data = gdp_data)
+}
+
+# Add a few combinations including the models we already built
+all_models[[length(all_models) + 1]] <- gdp_model   # Full model
+all_models[[length(all_models) + 1]] <- gdp_model2  # Reduced model
+
+# Compare models using AIC
+aic_values <- sapply(all_models, AIC)
+aic_table <- data.frame(
+  Model = sapply(all_models, function(m) paste(deparse(formula(m)), collapse = "")),
+  AIC   = aic_values
+)
+
+cat("AIC for different models:\n")
+print(aic_table[order(aic_table$AIC), ])
+
+# Select the model with lowest AIC
+best_model_idx <- which.min(aic_values)
+best_model     <- all_models[[best_model_idx]]
+
+cat("\nBest model by AIC:\n")
+print(summary(best_model))
+
+# ggplot diagnostics for best model (includes Residuals vs Fitted)
+diag_plots(best_model, "Best model (AIC)")
+```
+
+**Analysis of AIC Test:**
+
+The Akaike Information Criterion (AIC) test is a statistical method used for model selection, and in this case, it is applied to multiple regression models to determine which one provides the best trade-off between goodness of fit and model complexity. 
+
+From the AIC comparison table shown, we see that different models with varying combinations of predictors were assessed. The model with the lowest AIC value is considered the best in terms of balancing fit and simplicity. Here, the model that includes **UNRATE, DEFLATOR, FEDFUNDS, M2SL, and CCI** has the lowest AIC value (3839.225), making it the preferred model.
+
+The **R-squared value is 0.9782**, indicating a strong explanatory power, and the **adjusted R-squared is 0.9777**, suggesting that the model performs well even after adjusting for the number of predictors. The coefficients of the predictors are statistically significant, as seen in the small p-values. This confirms that each variable contributes meaningfully to predicting GDP.
+
+Finally, the residuals vs. fitted values plot for the best model is shown. The residuals are spread somewhat evenly around zero, though some patterns and deviations exist, which might suggest mild heteroscedasticity or other non-linearity. The **red horizontal line at zero** represents an ideal residual distribution, and the **blue smoothing line** helps visualize the trend in residuals. While the model is strong, slight deviations in residuals suggest potential areas for further refinement or transformation.
+
+Overall, the AIC analysis confirms that the original model is optimal among the tested alternatives. However, further diagnostic checks might be needed to ensure robustness.
+
+
+
+## RESET TEST 
+
+```{r, echo=FALSE, fig.width=8, fig.height=6}
+reset_result <- resettest(best_model, power=2:3, type="regressor")
+reset_result
+```
+
+**Analysis of RESTE Test:**
+
+The RESET (Regression Equation Specification Error Test) results provide strong evidence of model misspecification in the "best_model." With a remarkably high test statistic of 55.694 (df1 = 10, df2 = 225) and an extremely significant p-value (< 2.2e-16), the test firmly rejects the null hypothesis that the current linear functional form is correctly specified. This suggests that important non-linear relationships exist between the predictors and GDP that aren't captured by the current specification. The test was conducted using powers 2 and 3 (as indicated by power=2:3), meaning that adding squared and cubed terms of the existing predictors would likely significantly improve the model's fit. Despite the high R-squared values observed in the original model, this RESET test reveals fundamental limitations in the linear approach, indicating that a more complex functional form incorporating non-linear transformations would be more appropriate for modeling GDP relationships.
+
+---
+
+\newpage
+
+# Findings / Conclusion 
+
+The results of this study provide several key insights into the relationship between macroeconomic variables and nominal GDP:
+
+  1. Significance of Predictors:
+
+  - The Initial regression Model showed that all five macroeconomic indicators had a statistically significant relationship with GDP 
+  - Money Supply (M2SL) and the Federal Funds Rate (FEDFUNDS) exhibited a strong positive impact on GDP 
+  - Unemployment Rate (UNERATE) and Inflation (DEFLATOR) had a negative impact on GDP, as expected from economic theory 
+
+  2. Model Refinement & Assumption Violations:
+
+  - Diagnostic tests revealed issues with heteroscedasticity and non-linearity, indicating that a simple linear model may not fully capture GDP dynamics.
+  - The RESET test confirmed model misspecification, suggesting that additional non-linear terms or interaction effects should be considered.
+  - Multicollinearity tests (VIF) indicated that UNRATE should be removed, but doing so significantly reduced explanatory power (R² dropped from 0.9782 to 0.1551).
+
+  3. Model Selection via AIC:
+
+  - The best model, based on AIC, retained all five predictors, despite potential collinearity concerns, as it provided the best trade-off between complexity and predictive power.
+
+  4. Policy Implications:
+
+  - The strong relationship between money supply and GDP underscores the role of monetary policy in influencing economic growth.
+  - The negative impact of unemployment and inflation on GDP suggests that economic downturns and high inflationary periods significantly reduce economic output.
+  - The findings highlight the need for policymakers to consider macroeconomic stability measures when designing fiscal and monetary policies.
+
+
+# Final Thoughts
+
+Overall, this study confirms that macroeconomic indicators play a crucial role in determining GDP fluctuations in the U.S.. However, the analysis suggests that a more complex model incorporating non-linear effects might improve predictions. Future research could explore alternative modeling techniques, such as time-series analysis or machine learning approaches, to enhance predictive accuracy.
+
+---
+
+\newpage
+
+# References
+
+* GDP Data: https://fred.stlouisfed.org/series/GDP
+
+* Unemployment Rate Data: https://fred.stlouisfed.org/series/UNRATE
+
+* GDP Deflator Data: https://fred.stlouisfed.org/series/A191RI1Q225SBEA
+
+* Federal Funds Rate Data: https://fred.stlouisfed.org/series/DFF
+
+* Money Supply Data: https://fred.stlouisfed.org/series/WM2NS
+
+* Consumer Confidence Index Data: https://www.oecd.org/en/data/indicators/consumer-confidence-index-cci.html?oecdcontrol-b2a0dbca4d-var3=2001-01&oecdcontrol-b2a0dbca4d-var4=2024-11
+
